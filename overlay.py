@@ -8,41 +8,44 @@ class Overlay:
         self.memory_reader = memory_reader
         self.visible = True
 
-        # Create transparent, always-on-top tkinter window
         self.root = tk.Tk()
-        self.root.overrideredirect(True)  # No window borders
+        self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-transparentcolor", "black")
         self.root.configure(bg="black")
 
-        # Set window size and position (top right corner)
-        self.root.geometry(f"250x100+{self.root.winfo_screenwidth() - 260}+50")
 
-        # Combo label
-        self.combo_label = tk.Label(self.root, text="Combo: 0", fg="white", bg="black", font=("Segoe UI", 20, "bold"))
-        self.combo_label.pack()
+        self.root.geometry(f"400x120+{self.root.winfo_screenwidth() - 410}+50")
 
-        # Accuracy label
-        self.acc_label = tk.Label(self.root, text="Accuracy: 0.00%", fg="white", bg="black", font=("Segoe UI", 20))
-        self.acc_label.pack()
+        self.combo_label = tk.Label(self.root, text="Combo: 0", fg="white", bg="black",
+                                    font=("Consolas", 20, "bold"), width=22, anchor="w")
+        self.combo_label.pack(padx=10, pady=(10, 0))
+
+        self.acc_label = tk.Label(self.root, text="Accuracy: 100.00%", fg="white", bg="black",
+                                  font=("Consolas", 20), width=22, anchor="w")
+        self.acc_label.pack(padx=10, pady=(5, 10))
+
 
     def update_display(self):
         combo = self.memory_reader.get_combo()
-        accuracy = self.memory_reader.get_accuracy()
+        acc = self.memory_reader.get_accuracy()
 
         self.combo_label.config(text=f"Combo: {combo}")
-        self.acc_label.config(text=f"Accuracy: {accuracy:.2f}%")
+        self.acc_label.config(text=f"Accuracy: {acc:.2f}%")
 
         if self.visible:
             self.root.after(1000 // config.REFRESH_RATE, self.update_display)
 
     def toggle_visibility(self):
         if self.visible:
-            self.root.withdraw()  # Hide
+            self.root.withdraw()
         else:
-            self.root.deiconify()  # Show
+            self.root.deiconify()
         self.visible = not self.visible
 
     def run(self):
         self.update_display()
         self.root.mainloop()
+
+
+
