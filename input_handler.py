@@ -1,18 +1,20 @@
 # input_handler.py
-
 from pynput import keyboard
 import config
 
 def start_hotkey_listener(toggle_callback):
     def on_press(key):
         try:
-            if key.char == config.HOTKEY.lower():
+            # Handle function keys properly
+            if hasattr(key, 'name') and key.name.lower() == config.HOTKEY.lower():
+                toggle_callback()
+            # Handle character keys
+            elif hasattr(key, 'char') and key.char and key.char.lower() == config.HOTKEY.lower():
                 toggle_callback()
         except AttributeError:
-            # Handle special keys like F1, F8, etc.
-            if key == getattr(keyboard.Key, config.HOTKEY.lower(), None):
-                toggle_callback()
+            pass
 
     listener = keyboard.Listener(on_press=on_press)
-    listener.daemon = True  # So it closes when main program exits
+    listener.daemon = True
     listener.start()
+    return listener
