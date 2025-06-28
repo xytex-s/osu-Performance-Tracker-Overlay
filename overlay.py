@@ -136,3 +136,25 @@ class Overlay:
     def run(self):
         self.update_display()
         self.root.mainloop()
+
+    def _update_labels(self, current_data):
+        """Update UI labels with current data"""
+        self.combo_label.configure(text=f"Combo: {current_data['combo']}")
+        self.max_combo_label.configure(text=f"Max Combo: {getattr(self.memory_reader, 'get_max_combo', lambda: 0)()}")
+        self.acc_label.configure(text=f"Accuracy: {current_data['accuracy']:.2f}%")
+        self.miss_label.configure(text=f"Misses: {current_data['misses']}")
+        self.hp_label.configure(text=f"HP: {current_data['hp']:.2f}")
+        self.state_label.configure(text=f"State: {current_data['state']}")
+        if current_data['connected']:
+            self.status_label.configure(text="Status: Connected", text_color="green")
+            self.map_label.configure(text=getattr(self.memory_reader, 'get_map_info', lambda: "No map selected")())
+            if hasattr(self.memory_reader, 'last_map_stats'):
+                self.last_analysis = self.memory_reader.last_map_stats
+                self.analysis_button.configure(state="normal")
+        else:
+            self.status_label.configure(text="Status: Disconnected", text_color="red")
+            self.map_label.configure(text="No map selected")
+            self.analysis_button.configure(state="disabled")
+        self.update_counter += 1
+        if self.update_counter % 10 == 0:
+            print(f"Update count: {self.update_counter}")

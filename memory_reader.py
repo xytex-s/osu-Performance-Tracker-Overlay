@@ -86,41 +86,47 @@ class MemoryReader:
             menu = data.get("menu", {})
             state = menu.get("state", {})
 
+            # ✅ Move this INTO the `with` block:
+            self.combo = gameplay.get("combo", {}).get("current", 0)
+            self.max_combo = gameplay.get("combo", {}).get("max", 0)
+            self.accuracy = gameplay.get("accuracy", 100.0)
+            self.hp = gameplay.get("hp", {}).get("smooth", 1.0)
+            self.misses = gameplay.get("hits", {}).get("0", 0)
 
-        # Update basic stats
-        self.combo = gameplay.get("combo", {}).get("current", 0)
-        self.max_combo = gameplay.get("combo", {}).get("max", 0)
-        self.accuracy = gameplay.get("accuracy", 100.0)
-        self.hp = gameplay.get("hp", {}).get("smooth", 1.0)
-        self.misses = gameplay.get("hits", {}).get("0", 0)
+            new_state = state.get("name", "menu")
 
-        # Update game state
-        new_state = state.get("name", "menu")
+            if "bm" in menu:
+                bm = menu["bm"]
+                metadata = bm.get("metadata", {})
 
-        # Update map info
-        if "bm" in menu:
-            bm = menu["bm"]
-            self.map_info = {
-                "title": bm.get("metadata", {}).get("title", "Unknown"),
-                "artist": bm.get("metadata", {}).get("artist", "Unknown"),
-                "difficulty": bm.get("metadata", {}).get("difficulty", "Unknown"),
-                "mapper": bm.get("metadata", {}).get("mapper", "Unknown")
-            }
+                if isinstance(metadata, dict):
+                    self.map_info = {
+                        "title": metadata.get("title", "Unknown"),
+                        "artist": metadata.get("artist", "Unknown"),
+                        "difficulty": metadata.get("difficulty", "Unknown"),
+                        "mapper": metadata.get("mapper", "Unknown")
+                    }
+                else:
+                    print(f"⚠️ Invalid metadata type: {type(metadata)} → {metadata}")
+                    self.map_info = {
+                        "title": "Unknown",
+                        "artist": "Unknown",
+                        "difficulty": "Unknown",
+                        "mapper": "Unknown"
+                    }
 
-        # Handle state changes
-        if new_state != self.game_state:
-            self._handle_state_change(self.game_state, new_state)
-            self.game_state = new_state
+            if new_state != self.game_state:
+                self._handle_state_change(self.game_state, new_state)
+                self.game_state = new_state
 
-        # Track data during gameplay
-        if self.game_state == "play" and self.stats_tracker.is_playing:
-            current_time = time.time() * 1000  # Convert to milliseconds
-            if current_time - self.last_sample_time >= config.SAMPLE_INTERVAL:
-                self.stats_tracker.add_data_point(
-                    self.combo, self.accuracy, self.hp, self.misses,
-                    gameplay.get("unstable_rate", 0.0)
-                )
-                self.last_sample_time = current_time
+            if self.game_state == "play" and self.stats_tracker.is_playing:
+                current_time = time.time() * 1000
+                if current_time - self.last_sample_time >= config.SAMPLE_INTERVAL:
+                    self.stats_tracker.add_data_point(
+                        self.combo, self.accuracy, self.hp, self.misses,
+                        gameplay.get("unstable_rate", 0.0)
+                    )
+                    self.last_sample_time = current_time
 
     def _handle_state_change(self, old_state, new_state):
         """Handle game state changes for tracking"""

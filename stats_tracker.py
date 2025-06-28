@@ -3,6 +3,7 @@ import json
 import os
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from fileinput import filename
 from typing import List, Dict, Any
 import config
 
@@ -67,8 +68,6 @@ class StatsTracker:
         """Add a data point with validation"""
         if not self.is_playing:
             return
-
-        self.current_session.append(data_point)
 
         # Limit data points to prevent memory issues
         if len(self.current_session) > MAX_DATA_POINTS:
@@ -171,42 +170,58 @@ class StatsTracker:
 
     def _save_map_stats(self, map_stats: MapStats):
         """Save map statistics to JSON file"""
+        from matplotlib import pyplot as plt
+
         timestamp = datetime.fromtimestamp(map_stats.start_time).strftime("%Y%m%d_%H%M%S")
         filename = f"stats_{timestamp}_{map_stats.map_name.replace(' ', '_')}.json"
 
-        #def _calculate_accuracy_trend(self, data_points):
-            """Calculate if accuracy is improving, declining, or stable"""
-            if len(data_points) < 2:
-                return "insufficient_data"
-
-            # Linear regression on accuracy over time
-            timestamps = [dp.timestamp for dp in data_points]
-            accuracies = [dp.accuracy for dp in data_points]
-
-            # Simple linear regression
-            n = len(data_points)
-            sum_x = sum(timestamps)
-            sum_y = sum(accuracies)
-            sum_xy = sum(t * a for t, a in zip(timestamps, accuracies))
-            sum_x2 = sum(t * t for t in timestamps)
-
-            slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
-
-            if slope > 0.1:
-                return "improving"
-            elif slope < -0.1:
-                return "declining"
-            else:
-                return "stable"
-
-        # Convert to serializable format
-        data = asdict(map_stats)
-
         try:
-            os.makedirs("play_stats", exist_ok=True)
-            filepath = os.path.join("play_stats", filename)
-            with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2)
-            print(f"Stats saved to {filepath}")
+            with open(filename, 'w') as f:
+                json.dump(asdict(map_stats), f, indent=2)
+            print(f"Map stats saved to {filename}")
+
+            # Prepare data for plotting
+            timestamps = [dp.timestamp for dp in map_stats.data_points]
+            accuracies = [dp.accuracy for dp in map_stats.data_points]
+            combos = [dp.combo for dp in map_stats.data_points]
+            hps = [dp.hp for dp in map_stats.data_points]
+            unstable_rates = [dp.unstable_rate for dp in map_stats.data_points]
+
+            fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 12))
+
+            # Accuracy graph
+            ax1.plot(timestamps, accuracies, color='blue', label='Accuracy')
+            ax1.set_title('Accuracy Over Time')
+            ax1.set_xlabel('Time (s)')
+            ax1.set_ylabel('Accuracy (%)')
+            ax1.legend()
+
+            # Combo graph
+            ax2.plot(timestamps, combos, color='orange', label='Combo')
+            ax2.set_title('Combo Over Time')
+            ax2.set_xlabel('Time (s)')
+            ax2.set_ylabel('Combo')
+            ax2.legend()
+
+            # HP graph
+            ax3.plot(timestamps, hps, color='green', label='HP')
+            ax3.set_title('HP Over Time')
+            ax3.set_xlabel('Time (s)')
+            ax3.set_ylabel('HP')
+            ax3.legend()
+
+            # Unstable rate graph
+            if any(rate > 0 for rate in unstable_rates):
+                ax4.plot(timestamps, unstable_rates, color='red', label='Unstable Rate')
+                ax4.set_title('Unstable Rate Over Time')
+                ax4.set_xlabel('Time (s)')
+                ax4.set_ylabel('Unstable Rate')
+                ax4.legend()
+            else:
+                ax4.set_visible(False)
+
+            plt.tight_layout()
+            plt.savefig(f"{filename}_plot.png")
+            plt.close()
         except Exception as e:
-            print(f"Failed to save stats: {e}")
+            print(f"Error saving map stats: {e}")

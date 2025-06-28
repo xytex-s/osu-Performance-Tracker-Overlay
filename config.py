@@ -4,6 +4,9 @@ import os
 from dataclasses import dataclass, asdict
 from typing import Optional
 
+HOTKEY = 'f8'
+RECONNECT_DELAY = 5  # Number of seconds to wait before retrying connection
+WEBSOCKET_URI = "ws://localhost:24050/ws" # Default websocket URI
 
 @dataclass
 class Config:
