@@ -9,21 +9,22 @@ HOTKEY = 'f8'
 RECONNECT_DELAY = 5
 WEBSOCKET_URI = "ws://localhost:24050/ws"
 SAMPLE_INTERVAL = 100
-REFRESH_RATE = 60
+REFRESH_RATE = 30  # Reduced from 60 to improve performance
 MIN_PLAY_DURATION = 10
 
 @dataclass
 class Config:
-    refresh_rate: int = 60
+    refresh_rate: int = 30  # Reduced default
     hotkey: str = "f8"
     websocket_uri: str = "ws://localhost:24050/ws"
     reconnect_delay: int = 5
     sample_interval: int = 100
     min_play_duration: int = 10
-    max_data_points: int = 10000
+    max_data_points: int = 5000  # Reduced from 10000
     auto_show_analysis: bool = True
     save_stats: bool = True
     stats_directory: str = "play_stats"
+    debug_mode: bool = False  # New debug option
 
 
 def load_config(config_path: str = "config.json") -> Config:
@@ -37,6 +38,7 @@ def load_config(config_path: str = "config.json") -> Config:
                 for key, value in data.items():
                     if hasattr(config, key):
                         setattr(config, key, value)
+            print(f"Config loaded from {config_path}")
         except Exception as e:
             print(f"Error loading config: {e}, using defaults")
 
@@ -57,9 +59,21 @@ def save_config(config: Config, config_path: str = "config.json"):
     try:
         with open(config_path, 'w') as f:
             json.dump(asdict(config), f, indent=2)
+        print(f"Config saved to {config_path}")
     except Exception as e:
         print(f"Error saving config: {e}")
 
 
+def create_default_config():
+    """Create a default config file"""
+    config = Config()
+    save_config(config)
+    return config
+
+
 # Initialize config on import
-_config = load_config()
+try:
+    _config = load_config()
+except Exception as e:
+    print(f"Failed to load config, creating default: {e}")
+    _config = create_default_config()

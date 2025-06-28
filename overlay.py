@@ -3,6 +3,7 @@ import customtkinter as ctk
 import config
 from analysis_window import AnalysisWindow
 import threading
+import time
 
 
 class Overlay:
@@ -12,6 +13,7 @@ class Overlay:
         self.last_update_data = {}
         self.update_counter = 0
         self.last_map_stats = None
+        self.last_update_time = 0
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -85,6 +87,15 @@ class Overlay:
         )
         self.analysis_button.pack(pady=10)
 
+        # Debug info
+        self.debug_label = ctk.CTkLabel(
+            self.frame,
+            text="Debug: Waiting for data...",
+            font=("Segoe UI", 10),
+            text_color="gray"
+        )
+        self.debug_label.pack(anchor="w", pady=2)
+
         # Instructions
         self.help_label = ctk.CTkLabel(
             self.frame,
@@ -95,41 +106,74 @@ class Overlay:
         self.help_label.pack(anchor="w", pady=(10, 0))
 
     def update_display(self):
-        # Check for completed maps
-        latest_stats = self.memory_reader.get_latest_map_stats()
-        if latest_stats:
-            self.last_map_stats = latest_stats
-            self.analysis_button.configure(state="normal")
-            # Show analysis window automatically
-            if config._config.auto_show_analysis:
-                self.show_analysis_window(latest_stats)
+        current_time = time.time()
 
-        # Only update UI if data has actually changed
-        current_data = {
-            'combo': self.memory_reader.get_combo(),
-            'accuracy': self.memory_reader.get_accuracy(),
-            'hp': self.memory_reader.get_hp(),
-            'misses': self.memory_reader.get_misses(),
-            'max_combo': self.memory_reader.get_max_combo(),
-            'connected': self.memory_reader.is_connected(),
-            'state': self.memory_reader.get_game_state(),
-            'map_info': self.memory_reader.get_map_info()
-        }
+        # Check for completed maps first
+        try:
+            latest_stats = self.memory_reader.get_latest_map_stats()
+            if latest_stats:
+                self.last_map_stats = latest_stats
+                self.analysis_button.configure(state="normal")
+                print(f"New map stats available: {latest_stats.map_name}")
+                # Show analysis window automatically
+                if config._config.auto_show_analysis:
+                    self.show_analysis_window(latest_stats)
+        except Exception as e:
+            print(f"Error checking for map stats: {e}")
 
-        if current_data != self.last_update_data:
-            self._update_labels(current_data)
-            self.last_update_data = current_data
+        # Update UI at reduced frequency when not playing
+        should_update = False
+        game_state = self.memory_reader.get_game_state()
 
-        # Reduce update frequency when not playing
-        update_rate = config.REFRESH_RATE if current_data['state'] == 'play' else 10
-        self.root.after(1000 // update_rate, self.update_display)
+        if game_state == "play":
+            # Update more frequently during play
+            if current_time - self.last_update_time >= 1.0 / config.REFRESH_RATE:
+                should_update = True
+        else:
+            # Update less frequently in menu/results
+            if current_time - self.last_update_time >= 0.5:  # 2 FPS
+                should_update = True
+
+        if should_update:
+            self.last_update_time = current_time
+
+            try:
+                # Get current data
+                current_data = {
+                    'combo': self.memory_reader.get_combo(),
+                    'accuracy': self.memory_reader.get_accuracy(),
+                    'hp': self.memory_reader.get_hp(),
+                    'misses': self.memory_reader.get_misses(),
+                    'max_combo': self.memory_reader.get_max_combo(),
+                    'connected': self.memory_reader.is_connected(),
+                    'state': game_state,
+                    'map_info': self.memory_reader.get_map_info()
+                }
+
+                # Only update UI if data has actually changed
+                if current_data != self.last_update_data:
+                    self._update_labels(current_data)
+                    self.last_update_data = current_data
+
+            except Exception as e:
+                print(f"Error updating display: {e}")
+                self.debug_label.configure(text=f"Debug: Error - {str(e)[:50]}")
+
+        # Schedule next update
+        update_interval = 50 if game_state == "play" else 200  # 20 FPS or 5 FPS
+        self.root.after(update_interval, self.update_display)
 
     def show_analysis_window(self, map_stats):
         """Show the analysis window for completed map"""
         try:
-            # Create analysis window in main thread
             def create_analysis():
-                AnalysisWindow(map_stats)
+                try:
+                    AnalysisWindow(map_stats)
+                    print(f"Analysis window created for: {map_stats.map_name}")
+                except Exception as e:
+                    print(f"Error creating analysis window: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             if threading.current_thread() == threading.main_thread():
                 create_analysis()
@@ -142,21 +186,27 @@ class Overlay:
         """Show the last completed analysis"""
         if self.last_map_stats:
             self.show_analysis_window(self.last_map_stats)
+        else:
+            print("No analysis data available")
 
     def toggle_visibility(self):
         if self.visible:
             self.root.withdraw()
             self.visible = False
+            print("Overlay hidden")
         else:
             self.root.deiconify()
             self.visible = True
+            print("Overlay shown")
 
     def on_closing(self):
+        print("Overlay closing...")
         self.memory_reader.shutdown()
         self.root.quit()
         self.root.destroy()
 
     def run(self):
+        print("Starting overlay...")
         self.update_display()
         self.root.mainloop()
 
@@ -176,23 +226,29 @@ class Overlay:
 
     def _update_labels(self, current_data):
         """Update UI labels with current data"""
-        self.combo_label.configure(text=f"Combo: {current_data['combo']}")
-        self.max_combo_label.configure(text=f"Max Combo: {current_data['max_combo']}")
-        self.acc_label.configure(text=f"Accuracy: {current_data['accuracy']:.2f}%")
-        self.miss_label.configure(text=f"Misses: {current_data['misses']}")
-        self.hp_label.configure(text=f"HP: {current_data['hp']:.2f}")
-        self.state_label.configure(text=f"State: {current_data['state']}")
+        try:
+            self.combo_label.configure(text=f"Combo: {current_data['combo']}")
+            self.max_combo_label.configure(text=f"Max Combo: {current_data['max_combo']}")
+            self.acc_label.configure(text=f"Accuracy: {current_data['accuracy']:.2f}%")
+            self.miss_label.configure(text=f"Misses: {current_data['misses']}")
+            self.hp_label.configure(text=f"HP: {current_data['hp']:.2f}")
+            self.state_label.configure(text=f"State: {current_data['state']}")
 
-        if current_data['connected']:
-            self.status_label.configure(text="Status: Connected", text_color="green")
-            map_text = self._format_map_info(current_data['map_info'])
-            self.map_label.configure(text=map_text)
-        else:
-            self.status_label.configure(text="Status: Disconnected", text_color="red")
-            self.map_label.configure(text="No map selected")
-            self.analysis_button.configure(state="disabled")
+            if current_data['connected']:
+                self.status_label.configure(text="Status: Connected", text_color="green")
+                map_text = self._format_map_info(current_data['map_info'])
+                self.map_label.configure(text=map_text)
+            else:
+                self.status_label.configure(text="Status: Disconnected", text_color="red")
+                self.map_label.configure(text="No map selected")
+                self.analysis_button.configure(state="disabled")
 
-        # Debug counter (remove in production)
-        self.update_counter += 1
-        if self.update_counter % 30 == 0:  # Reduced frequency
-            print(f"UI Update #{self.update_counter}: {current_data['state']}")
+            # Update debug info
+            self.debug_label.configure(
+                text=f"Debug: Updates #{self.update_counter}, State: {current_data['state']}"
+            )
+            self.update_counter += 1
+
+        except Exception as e:
+            print(f"Error updating labels: {e}")
+            self.debug_label.configure(text=f"Debug: Label update error - {str(e)[:30]}")
