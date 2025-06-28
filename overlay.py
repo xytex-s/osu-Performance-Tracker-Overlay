@@ -2,6 +2,8 @@
 import customtkinter as ctk
 import config
 from analysis_window import AnalysisWindow
+import threading
+
 
 class Overlay:
     def __init__(self, memory_reader):
@@ -9,13 +11,14 @@ class Overlay:
         self.visible = True
         self.last_update_data = {}
         self.update_counter = 0
+        self.last_map_stats = None
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
 
         self.root = ctk.CTk()
         self.root.title("osu! Performance Tracker")
-        self.root.geometry("500x450+300+300")  # Bigger for new info
+        self.root.geometry("500x450+300+300")
         self.root.resizable(True, True)
         self.root.minsize(350, 300)
         self.root.attributes("-topmost", True)
@@ -52,9 +55,10 @@ class Overlay:
             self.frame,
             text="No map selected",
             font=("Segoe UI", 14),
-            text_color="lightblue"
+            text_color="lightblue",
+            wraplength=450
         )
-        self.map_label.pack(anchor="w", pady=5)
+        self.map_label.pack(anchor="w", pady=5, fill="x")
 
         # Game stats
         self.combo_label = ctk.CTkLabel(self.frame, text="Combo: 0", font=("Segoe UI", 18))
@@ -91,14 +95,25 @@ class Overlay:
         self.help_label.pack(anchor="w", pady=(10, 0))
 
     def update_display(self):
+        # Check for completed maps
+        latest_stats = self.memory_reader.get_latest_map_stats()
+        if latest_stats:
+            self.last_map_stats = latest_stats
+            self.analysis_button.configure(state="normal")
+            # Show analysis window automatically
+            if config._config.auto_show_analysis:
+                self.show_analysis_window(latest_stats)
+
         # Only update UI if data has actually changed
         current_data = {
             'combo': self.memory_reader.get_combo(),
             'accuracy': self.memory_reader.get_accuracy(),
             'hp': self.memory_reader.get_hp(),
             'misses': self.memory_reader.get_misses(),
+            'max_combo': self.memory_reader.get_max_combo(),
             'connected': self.memory_reader.is_connected(),
-            'state': self.memory_reader.get_game_state()
+            'state': self.memory_reader.get_game_state(),
+            'map_info': self.memory_reader.get_map_info()
         }
 
         if current_data != self.last_update_data:
@@ -112,14 +127,21 @@ class Overlay:
     def show_analysis_window(self, map_stats):
         """Show the analysis window for completed map"""
         try:
-            AnalysisWindow(map_stats)
+            # Create analysis window in main thread
+            def create_analysis():
+                AnalysisWindow(map_stats)
+
+            if threading.current_thread() == threading.main_thread():
+                create_analysis()
+            else:
+                self.root.after(0, create_analysis)
         except Exception as e:
             print(f"Error showing analysis: {e}")
 
     def show_last_analysis(self):
         """Show the last completed analysis"""
-        if hasattr(self, 'last_analysis'):
-            self.show_analysis_window(self.last_analysis)
+        if self.last_map_stats:
+            self.show_analysis_window(self.last_map_stats)
 
     def toggle_visibility(self):
         if self.visible:
@@ -130,6 +152,7 @@ class Overlay:
             self.visible = True
 
     def on_closing(self):
+        self.memory_reader.shutdown()
         self.root.quit()
         self.root.destroy()
 
@@ -137,24 +160,39 @@ class Overlay:
         self.update_display()
         self.root.mainloop()
 
+    def _format_map_info(self, map_info):
+        """Format map information for display"""
+        if not map_info or not isinstance(map_info, dict):
+            return "No map selected"
+
+        title = map_info.get('title', 'Unknown')
+        artist = map_info.get('artist', 'Unknown')
+        difficulty = map_info.get('difficulty', 'Unknown')
+
+        if title == 'Unknown' and artist == 'Unknown':
+            return "No map selected"
+
+        return f"{title} - {artist} [{difficulty}]"
+
     def _update_labels(self, current_data):
         """Update UI labels with current data"""
         self.combo_label.configure(text=f"Combo: {current_data['combo']}")
-        self.max_combo_label.configure(text=f"Max Combo: {getattr(self.memory_reader, 'get_max_combo', lambda: 0)()}")
+        self.max_combo_label.configure(text=f"Max Combo: {current_data['max_combo']}")
         self.acc_label.configure(text=f"Accuracy: {current_data['accuracy']:.2f}%")
         self.miss_label.configure(text=f"Misses: {current_data['misses']}")
         self.hp_label.configure(text=f"HP: {current_data['hp']:.2f}")
         self.state_label.configure(text=f"State: {current_data['state']}")
+
         if current_data['connected']:
             self.status_label.configure(text="Status: Connected", text_color="green")
-            self.map_label.configure(text=getattr(self.memory_reader, 'get_map_info', lambda: "No map selected")())
-            if hasattr(self.memory_reader, 'last_map_stats'):
-                self.last_analysis = self.memory_reader.last_map_stats
-                self.analysis_button.configure(state="normal")
+            map_text = self._format_map_info(current_data['map_info'])
+            self.map_label.configure(text=map_text)
         else:
             self.status_label.configure(text="Status: Disconnected", text_color="red")
             self.map_label.configure(text="No map selected")
             self.analysis_button.configure(state="disabled")
+
+        # Debug counter (remove in production)
         self.update_counter += 1
-        if self.update_counter % 10 == 0:
-            print(f"Update count: {self.update_counter}")
+        if self.update_counter % 30 == 0:  # Reduced frequency
+            print(f"UI Update #{self.update_counter}: {current_data['state']}")

@@ -3,7 +3,6 @@ import json
 import os
 from datetime import datetime
 from dataclasses import dataclass, asdict
-from fileinput import filename
 from typing import List, Dict, Any
 import config
 
@@ -41,6 +40,10 @@ class MapStats:
     combo_breaks: int = 0
     peak_combo: int = 0
     consistency_score: float = 0.0
+    accuracy_trend: float = 0.0
+    stamina_score: float = 0.0
+    reaction_time_avg: float = 0.0
+    difficulty_spikes: int = 0
 
 
 class StatsTracker:
@@ -63,7 +66,6 @@ class StatsTracker:
         self.map_info = map_info
         print(f"Started tracking: {map_info.get('title', 'Unknown')} - {map_info.get('difficulty', 'Unknown')}")
 
-    # In stats_tracker.py - Add data validation
     def add_data_point(self, combo: int, accuracy: float, hp: float, misses: int, unstable_rate: float = 0.0):
         """Add a data point with validation"""
         if not self.is_playing:
@@ -125,8 +127,9 @@ class StatsTracker:
         self.completed_maps.append(map_stats)
         self.is_playing = False
 
-        # Save to file
-        self._save_map_stats(map_stats)
+        # Save to file if enabled
+        if config._config.save_stats:
+            self._save_map_stats(map_stats)
 
         return map_stats
 
@@ -168,60 +171,111 @@ class StatsTracker:
         map_stats.reaction_time_avg = self._calculate_avg_reaction_time(map_stats.data_points)
         map_stats.difficulty_spikes = self._detect_difficulty_spikes(map_stats.data_points)
 
+    def _calculate_accuracy_trend(self, data_points: List[DataPoint]) -> float:
+        """Calculate if accuracy is improving or declining over time"""
+        if len(data_points) < 2:
+            return 0.0
+
+        # Simple linear regression to find trend
+        n = len(data_points)
+        x_values = list(range(n))
+        y_values = [dp.accuracy for dp in data_points]
+
+        x_mean = sum(x_values) / n
+        y_mean = sum(y_values) / n
+
+        numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, y_values))
+        denominator = sum((x - x_mean) ** 2 for x in x_values)
+
+        if denominator == 0:
+            return 0.0
+
+        slope = numerator / denominator
+        return slope
+
+    def _calculate_stamina_score(self, data_points: List[DataPoint]) -> float:
+        """Calculate stamina based on accuracy decline over time"""
+        if len(data_points) < 10:
+            return 100.0
+
+        # Compare first and last 25% of the play
+        first_quarter = data_points[:len(data_points) // 4]
+        last_quarter = data_points[len(data_points) * 3 // 4:]
+
+        if not first_quarter or not last_quarter:
+            return 100.0
+
+        first_avg = sum(dp.accuracy for dp in first_quarter) / len(first_quarter)
+        last_avg = sum(dp.accuracy for dp in last_quarter) / len(last_quarter)
+
+        # Calculate stamina as percentage of accuracy maintained
+        stamina = (last_avg / first_avg) * 100 if first_avg > 0 else 100.0
+        return min(100.0, max(0.0, stamina))
+
+    def _calculate_avg_reaction_time(self, data_points: List[DataPoint]) -> float:
+        """Calculate average reaction time based on unstable rate"""
+        if not data_points:
+            return 0.0
+
+        unstable_rates = [dp.unstable_rate for dp in data_points if dp.unstable_rate > 0]
+        if not unstable_rates:
+            return 0.0
+
+        return sum(unstable_rates) / len(unstable_rates)
+
+    def _detect_difficulty_spikes(self, data_points: List[DataPoint]) -> int:
+        """Detect sections where accuracy drops significantly"""
+        if len(data_points) < 5:
+            return 0
+
+        spikes = 0
+        window_size = 5
+        threshold = 5.0  # 5% accuracy drop
+
+        for i in range(window_size, len(data_points) - window_size):
+            before = data_points[i - window_size:i]
+            after = data_points[i:i + window_size]
+
+            before_avg = sum(dp.accuracy for dp in before) / len(before)
+            after_avg = sum(dp.accuracy for dp in after) / len(after)
+
+            if before_avg - after_avg > threshold:
+                spikes += 1
+
+        return spikes
+
     def _save_map_stats(self, map_stats: MapStats):
         """Save map statistics to JSON file"""
-        from matplotlib import pyplot as plt
-
-        timestamp = datetime.fromtimestamp(map_stats.start_time).strftime("%Y%m%d_%H%M%S")
-        filename = f"stats_{timestamp}_{map_stats.map_name.replace(' ', '_')}.json"
-
         try:
-            with open(filename, 'w') as f:
-                json.dump(asdict(map_stats), f, indent=2)
+            # Create stats directory if it doesn't exist
+            stats_dir = config._config.stats_directory
+            if not os.path.exists(stats_dir):
+                os.makedirs(stats_dir)
+
+            timestamp = datetime.fromtimestamp(map_stats.start_time).strftime("%Y%m%d_%H%M%S")
+            safe_map_name = "".join(c for c in map_stats.map_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            filename = f"{stats_dir}/stats_{timestamp}_{safe_map_name.replace(' ', '_')}.json"
+
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(asdict(map_stats), f, indent=2, ensure_ascii=False)
             print(f"Map stats saved to {filename}")
 
-            # Prepare data for plotting
-            timestamps = [dp.timestamp for dp in map_stats.data_points]
-            accuracies = [dp.accuracy for dp in map_stats.data_points]
-            combos = [dp.combo for dp in map_stats.data_points]
-            hps = [dp.hp for dp in map_stats.data_points]
-            unstable_rates = [dp.unstable_rate for dp in map_stats.data_points]
-
-            fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 12))
-
-            # Accuracy graph
-            ax1.plot(timestamps, accuracies, color='blue', label='Accuracy')
-            ax1.set_title('Accuracy Over Time')
-            ax1.set_xlabel('Time (s)')
-            ax1.set_ylabel('Accuracy (%)')
-            ax1.legend()
-
-            # Combo graph
-            ax2.plot(timestamps, combos, color='orange', label='Combo')
-            ax2.set_title('Combo Over Time')
-            ax2.set_xlabel('Time (s)')
-            ax2.set_ylabel('Combo')
-            ax2.legend()
-
-            # HP graph
-            ax3.plot(timestamps, hps, color='green', label='HP')
-            ax3.set_title('HP Over Time')
-            ax3.set_xlabel('Time (s)')
-            ax3.set_ylabel('HP')
-            ax3.legend()
-
-            # Unstable rate graph
-            if any(rate > 0 for rate in unstable_rates):
-                ax4.plot(timestamps, unstable_rates, color='red', label='Unstable Rate')
-                ax4.set_title('Unstable Rate Over Time')
-                ax4.set_xlabel('Time (s)')
-                ax4.set_ylabel('Unstable Rate')
-                ax4.legend()
-            else:
-                ax4.set_visible(False)
-
-            plt.tight_layout()
-            plt.savefig(f"{filename}_plot.png")
-            plt.close()
         except Exception as e:
             print(f"Error saving map stats: {e}")
+
+    def get_session_summary(self) -> Dict[str, Any]:
+        """Get summary of current session"""
+        if not self.completed_maps:
+            return {}
+
+        total_maps = len(self.completed_maps)
+        avg_accuracy = sum(stats.final_accuracy for stats in self.completed_maps) / total_maps
+        total_playtime = sum(stats.play_duration for stats in self.completed_maps)
+
+        return {
+            "total_maps": total_maps,
+            "avg_accuracy": avg_accuracy,
+            "total_playtime": total_playtime,
+            "best_accuracy": max(stats.final_accuracy for stats in self.completed_maps),
+            "best_combo": max(stats.max_combo for stats in self.completed_maps)
+        }

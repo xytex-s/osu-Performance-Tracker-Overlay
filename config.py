@@ -4,9 +4,13 @@ import os
 from dataclasses import dataclass, asdict
 from typing import Optional
 
+# Legacy constants for backwards compatibility
 HOTKEY = 'f8'
-RECONNECT_DELAY = 5  # Number of seconds to wait before retrying connection
-WEBSOCKET_URI = "ws://localhost:24050/ws" # Default websocket URI
+RECONNECT_DELAY = 5
+WEBSOCKET_URI = "ws://localhost:24050/ws"
+SAMPLE_INTERVAL = 100
+REFRESH_RATE = 60
+MIN_PLAY_DURATION = 10
 
 @dataclass
 class Config:
@@ -36,6 +40,15 @@ def load_config(config_path: str = "config.json") -> Config:
         except Exception as e:
             print(f"Error loading config: {e}, using defaults")
 
+    # Update legacy constants for backwards compatibility
+    global HOTKEY, RECONNECT_DELAY, WEBSOCKET_URI, SAMPLE_INTERVAL, REFRESH_RATE, MIN_PLAY_DURATION
+    HOTKEY = config.hotkey
+    RECONNECT_DELAY = config.reconnect_delay
+    WEBSOCKET_URI = config.websocket_uri
+    SAMPLE_INTERVAL = config.sample_interval
+    REFRESH_RATE = config.refresh_rate
+    MIN_PLAY_DURATION = config.min_play_duration
+
     return config
 
 
@@ -46,3 +59,7 @@ def save_config(config: Config, config_path: str = "config.json"):
             json.dump(asdict(config), f, indent=2)
     except Exception as e:
         print(f"Error saving config: {e}")
+
+
+# Initialize config on import
+_config = load_config()
