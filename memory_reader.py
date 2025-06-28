@@ -28,6 +28,9 @@ class MemoryReader:
         self.thread = threading.Thread(target=self._start_loop, daemon=True)
         self.thread.start()
 
+        self._data_lock = threading.RLock()
+        self._shutdown_event = threading.Event()
+
     def _start_loop(self):
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self.connect_with_retry())
@@ -43,31 +46,46 @@ class MemoryReader:
 
     async def connect(self):
         try:
-            async with websockets.connect(config.WEBSOCKET_URI) as websocket:
+            async with websockets.connect(
+                    config.WEBSOCKET_URI,
+                    ping_interval=20,  # Add ping to detect disconnections
+                    ping_timeout=10
+            ) as websocket:
                 print("Connected to Tosu!")
                 self.connected = True
 
                 while True:
                     try:
-                        message = await websocket.recv()
+                        message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                         data = json.loads(message)
                         self.update_data(data)
+                    except asyncio.TimeoutError:
+                        # Send ping to check connection
+                        await websocket.ping()
                     except websockets.exceptions.ConnectionClosed:
                         print("Connection closed by server")
                         break
-                    except json.JSONDecodeError:
-                        print("Invalid JSON received")
+                    except json.JSONDecodeError as e:
+                        print(f"Invalid JSON received: {e}")
                         continue
+                    except Exception as e:
+                        print(f"Unexpected error: {e}")
+                        break
 
+        except ConnectionRefusedError:
+            print("Tosu is not running or not accessible")
+            raise
         except Exception as e:
             print(f"Websocket error: {e}")
             self.connected = False
             raise
 
     def update_data(self, data):
-        gameplay = data.get("gameplay", {})
-        menu = data.get("menu", {})
-        state = menu.get("state", {})
+        with self._data_lock:
+            gameplay = data.get("gameplay", {})
+            menu = data.get("menu", {})
+            state = menu.get("state", {})
+
 
         # Update basic stats
         self.combo = gameplay.get("combo", {}).get("current", 0)
@@ -127,7 +145,9 @@ class MemoryReader:
         self.latest_map_stats = map_stats
 
     def get_combo(self):
-        return self.combo
+        with self._data_lock:
+            return self.combo
+
 
     def get_max_combo(self):
         return self.max_combo
@@ -149,6 +169,12 @@ class MemoryReader:
 
     def get_map_info(self):
         return self.map_info
+
+    def shutdown(self):
+        """Graceful shutdown"""
+        self._shutdown_event.set()
+        if hasattr(self, 'loop') and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
 
     def get_latest_map_stats(self):
         """Get and clear the latest completed map stats"""

@@ -7,6 +7,8 @@ class Overlay:
     def __init__(self, memory_reader):
         self.memory_reader = memory_reader
         self.visible = True
+        self.last_update_data = {}
+        self.update_counter = 0
 
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -89,45 +91,23 @@ class Overlay:
         self.help_label.pack(anchor="w", pady=(10, 0))
 
     def update_display(self):
-        # Update connection status
-        if self.memory_reader.is_connected():
-            self.status_label.configure(text="Status: Connected", text_color="green")
-        else:
-            self.status_label.configure(text="Status: Disconnected", text_color="red")
+        # Only update UI if data has actually changed
+        current_data = {
+            'combo': self.memory_reader.get_combo(),
+            'accuracy': self.memory_reader.get_accuracy(),
+            'hp': self.memory_reader.get_hp(),
+            'misses': self.memory_reader.get_misses(),
+            'connected': self.memory_reader.is_connected(),
+            'state': self.memory_reader.get_game_state()
+        }
 
-        # Update game state
-        state = self.memory_reader.get_game_state()
-        state_color = {
-            "menu": "gray",
-            "play": "green",
-            "results": "blue"
-        }.get(state, "gray")
-        self.state_label.configure(text=f"State: {state.title()}", text_color=state_color)
+        if current_data != self.last_update_data:
+            self._update_labels(current_data)
+            self.last_update_data = current_data
 
-        # Update map info
-        map_info = self.memory_reader.get_map_info()
-        if map_info.get("title") != "Unknown":
-            map_text = f"{map_info['title']} - {map_info['difficulty']}"
-            self.map_label.configure(text=map_text)
-        else:
-            self.map_label.configure(text="No map selected")
-
-        # Update game data
-        self.combo_label.configure(text=f"Combo: {self.memory_reader.get_combo()}")
-        self.max_combo_label.configure(text=f"Max Combo: {self.memory_reader.get_max_combo()}")
-        self.acc_label.configure(text=f"Accuracy: {self.memory_reader.get_accuracy():.2f}%")
-        self.miss_label.configure(text=f"Misses: {self.memory_reader.get_misses()}")
-        self.hp_label.configure(text=f"HP: {self.memory_reader.get_hp():.2f}")
-
-        # Check for new analysis
-        latest_stats = self.memory_reader.get_latest_map_stats()
-        if latest_stats:
-            self.show_analysis_window(latest_stats)
-            self.analysis_button.configure(state="normal")
-            self.last_analysis = latest_stats
-
-        # Schedule next update
-        self.root.after(1000 // config.REFRESH_RATE, self.update_display)
+        # Reduce update frequency when not playing
+        update_rate = config.REFRESH_RATE if current_data['state'] == 'play' else 10
+        self.root.after(1000 // update_rate, self.update_display)
 
     def show_analysis_window(self, map_stats):
         """Show the analysis window for completed map"""

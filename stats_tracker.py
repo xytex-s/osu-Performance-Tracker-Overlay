@@ -6,6 +6,8 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
 import config
 
+MAX_DATA_POINTS = 10000  # Limit to prevent memory issues
+
 
 @dataclass
 class DataPoint:
@@ -60,10 +62,26 @@ class StatsTracker:
         self.map_info = map_info
         print(f"Started tracking: {map_info.get('title', 'Unknown')} - {map_info.get('difficulty', 'Unknown')}")
 
+    # In stats_tracker.py - Add data validation
     def add_data_point(self, combo: int, accuracy: float, hp: float, misses: int, unstable_rate: float = 0.0):
-        """Add a data point to the current session"""
+        """Add a data point with validation"""
         if not self.is_playing:
             return
+
+        self.current_session.append(data_point)
+
+        # Limit data points to prevent memory issues
+        if len(self.current_session) > MAX_DATA_POINTS:
+            # Keep every nth point to maintain timeline
+            step = len(self.current_session) // (MAX_DATA_POINTS // 2)
+            self.current_session = self.current_session[::step]
+
+        # Validate inputs
+        combo = max(0, int(combo)) if combo is not None else 0
+        accuracy = max(0.0, min(100.0, float(accuracy))) if accuracy is not None else 0.0
+        hp = max(0.0, min(1.0, float(hp))) if hp is not None else 0.0
+        misses = max(0, int(misses)) if misses is not None else 0
+        unstable_rate = max(0.0, float(unstable_rate)) if unstable_rate is not None else 0.0
 
         data_point = DataPoint(
             timestamp=time.time() - self.session_start_time,
@@ -114,7 +132,7 @@ class StatsTracker:
         return map_stats
 
     def _calculate_advanced_stats(self, map_stats: MapStats):
-        """Calculate advanced statistics from data points"""
+        """Calculate comprehensive statistics"""
         if not map_stats.data_points:
             return
 
@@ -145,10 +163,41 @@ class StatsTracker:
         # Consistency score (lower variance = higher consistency)
         map_stats.consistency_score = max(0, 100 - (variance * 10))
 
+        # Additional metrics
+        map_stats.accuracy_trend = self._calculate_accuracy_trend(map_stats.data_points)
+        map_stats.stamina_score = self._calculate_stamina_score(map_stats.data_points)
+        map_stats.reaction_time_avg = self._calculate_avg_reaction_time(map_stats.data_points)
+        map_stats.difficulty_spikes = self._detect_difficulty_spikes(map_stats.data_points)
+
     def _save_map_stats(self, map_stats: MapStats):
         """Save map statistics to JSON file"""
         timestamp = datetime.fromtimestamp(map_stats.start_time).strftime("%Y%m%d_%H%M%S")
         filename = f"stats_{timestamp}_{map_stats.map_name.replace(' ', '_')}.json"
+
+        #def _calculate_accuracy_trend(self, data_points):
+            """Calculate if accuracy is improving, declining, or stable"""
+            if len(data_points) < 2:
+                return "insufficient_data"
+
+            # Linear regression on accuracy over time
+            timestamps = [dp.timestamp for dp in data_points]
+            accuracies = [dp.accuracy for dp in data_points]
+
+            # Simple linear regression
+            n = len(data_points)
+            sum_x = sum(timestamps)
+            sum_y = sum(accuracies)
+            sum_xy = sum(t * a for t, a in zip(timestamps, accuracies))
+            sum_x2 = sum(t * t for t in timestamps)
+
+            slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
+
+            if slope > 0.1:
+                return "improving"
+            elif slope < -0.1:
+                return "declining"
+            else:
+                return "stable"
 
         # Convert to serializable format
         data = asdict(map_stats)
