@@ -10,6 +10,7 @@ from stats_tracker import StatsTracker
 
 class MemoryReader:
     def __init__(self):
+        # Initialize all attributes first to prevent AttributeError
         self.combo = 0
         self.max_combo = 0
         self.misses = 0
@@ -24,16 +25,31 @@ class MemoryReader:
         self.last_sample_time = 0
         self.was_playing = False
 
-        self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self._start_loop, daemon=True)
-        self.thread.start()
-
+        # Threading and async setup - initialize these early
         self._data_lock = threading.RLock()
         self._shutdown_event = threading.Event()
 
+        # Initialize loop and thread attributes
+        self.loop = None
+        self.thread = None
+
+        # Now safely start the async components
+        try:
+            self.loop = asyncio.new_event_loop()
+            self.thread = threading.Thread(target=self._start_loop, daemon=True)
+            self.thread.start()
+        except Exception as e:
+            print(f"Failed to initialize MemoryReader: {e}")
+            # Ensure cleanup can still work
+            if not hasattr(self, '_shutdown_event'):
+                self._shutdown_event = threading.Event()
+
     def _start_loop(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self.connect_with_retry())
+        try:
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self.connect_with_retry())
+        except Exception as e:
+            print(f"Error in async loop: {e}")
 
     async def connect_with_retry(self):
         while not self._shutdown_event.is_set():
@@ -42,7 +58,15 @@ class MemoryReader:
             except Exception as e:
                 print(f"Connection failed: {e}. Retrying in {config.RECONNECT_DELAY} seconds...")
                 self.connected = False
-                await asyncio.sleep(config.RECONNECT_DELAY)
+                # Use asyncio.sleep with timeout to allow shutdown
+                try:
+                    await asyncio.wait_for(
+                        asyncio.sleep(config.RECONNECT_DELAY),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    # Check shutdown more frequently
+                    continue
 
     async def connect(self):
         try:
@@ -61,7 +85,11 @@ class MemoryReader:
                         self.update_data(data)
                     except asyncio.TimeoutError:
                         # Send ping to check connection
-                        await websocket.ping()
+                        try:
+                            await websocket.ping()
+                        except Exception:
+                            # Connection likely lost
+                            break
                     except websockets.exceptions.ConnectionClosed:
                         print("Connection closed by server")
                         break
@@ -225,9 +253,26 @@ class MemoryReader:
     def shutdown(self):
         """Graceful shutdown"""
         print("Shutting down memory reader...")
-        self._shutdown_event.set()
-        if hasattr(self, 'loop') and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
+
+        # Set shutdown event first
+        if hasattr(self, '_shutdown_event'):
+            self._shutdown_event.set()
+
+        # Stop the event loop safely
+        if hasattr(self, 'loop') and self.loop and self.loop.is_running():
+            try:
+                self.loop.call_soon_threadsafe(self.loop.stop)
+            except Exception as e:
+                print(f"Error stopping loop: {e}")
+
+        # Wait for thread to finish (with timeout)
+        if hasattr(self, 'thread') and self.thread and self.thread.is_alive():
+            try:
+                self.thread.join(timeout=2.0)
+                if self.thread.is_alive():
+                    print("Warning: Thread did not stop cleanly")
+            except Exception as e:
+                print(f"Error joining thread: {e}")
 
     def get_latest_map_stats(self):
         """Get and clear the latest completed map stats"""
