@@ -1,0 +1,5 @@
+matplotlib~=3.10.3
+numpy~=2.1.2
+customtkinter~=5.2.2
+pynput~=1.8.1
+websockets~=15.0.1
